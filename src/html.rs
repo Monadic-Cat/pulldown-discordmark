@@ -160,9 +160,6 @@ where
                     escape_html(&mut self.writer, &text)?;
                     self.write("</code>")?;
                 }
-                Html(html) => {
-                    self.write(&html)?;
-                }
                 SoftBreak => {
                     self.write_newline()?;
                 }
@@ -424,7 +421,7 @@ where
                     }
                     nest -= 1;
                 }
-                Html(text) | Code(text) | Text(text) => {
+                Code(text) | Text(text) => {
                     escape_html(&mut self.writer, &text)?;
                     self.end_newline = text.ends_with('\n');
                 }

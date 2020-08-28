@@ -154,8 +154,6 @@ pub enum Event<'a> {
     Text(CowStr<'a>),
     /// An inline code node.
     Code(CowStr<'a>),
-    /// An HTML node.
-    Html(CowStr<'a>),
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
@@ -210,7 +208,6 @@ enum ItemBody {
     // repeats, can_open, can_close
     MaybeEmphasis(usize, bool, bool),
     MaybeCode(usize, bool), // number of backticks, preceeded by backslash
-    MaybeHtml,
     MaybeLinkOpen,
     MaybeLinkClose,
     MaybeImage,
@@ -229,7 +226,6 @@ enum ItemBody {
     Heading(u32), // heading level
     FencedCodeBlock(CowIndex),
     IndentCodeBlock,
-    Html,
     BlockQuote,
     List(bool, u8, u64), // is_tight, list character, list start index
     ListItem(usize),     // indent level
@@ -250,7 +246,6 @@ impl<'a> ItemBody {
     fn is_inline(&self) -> bool {
         match *self {
             ItemBody::MaybeEmphasis(..)
-            | ItemBody::MaybeHtml
             | ItemBody::MaybeCode(..)
             | ItemBody::MaybeLinkOpen
             | ItemBody::MaybeLinkClose
@@ -412,9 +407,6 @@ impl<'a> FirstPass<'a> {
         self.begin_list_item = false;
         self.finish_list(start_ix);
 
-        // Save `remaining_space` here to avoid needing to backtrack `line_start` for HTML blocks
-        let remaining_space = line_start.remaining_space();
-
         let indent = line_start.scan_space_upto(4);
         if indent == 4 {
             let ix = start_ix + line_start.bytes_scanned();
@@ -423,26 +415,6 @@ impl<'a> FirstPass<'a> {
         }
 
         let ix = start_ix + line_start.bytes_scanned();
-
-        // HTML Blocks
-        if bytes[ix] == b'<' {
-            // Types 1-5 are all detected by one function and all end with the same
-            // pattern
-            if let Some(html_end_tag) = get_html_end_tag(&bytes[(ix + 1)..]) {
-                return self.parse_html_block_type_1_to_5(ix, html_end_tag, remaining_space);
-            }
-
-            // Detect type 6
-            let possible_tag = scan_html_block_tag(&bytes[(ix + 1)..]).1;
-            if is_html_tag(possible_tag) {
-                return self.parse_html_block_type_6_or_7(ix, remaining_space);
-            }
-
-            // Detect type 7
-            if let Some(_html_bytes) = scan_html_type_7(&bytes[(ix + 1)..]) {
-                return self.parse_html_block_type_6_or_7(ix, remaining_space);
-            }
-        }
 
         if let Ok(n) = scan_hrule(&bytes[ix..]) {
             return self.parse_hrule(n, ix);
@@ -804,18 +776,6 @@ impl<'a> FirstPass<'a> {
                     begin_text = ix + count;
                     LoopInstruction::ContinueAndSkip(count - 1)
                 }
-                b'<' => {
-                    // Note: could detect some non-HTML cases and early escape here, but not
-                    // clear that's a win.
-                    self.tree.append_text(begin_text, ix);
-                    self.tree.append(Item {
-                        start: ix,
-                        end: ix + 1,
-                        body: ItemBody::MaybeHtml,
-                    });
-                    begin_text = ix + 1;
-                    LoopInstruction::ContinueAndSkip(0)
-                }
                 b'!' => {
                     if ix + 1 < self.text.len() && bytes[ix + 1] == b'[' {
                         self.tree.append_text(begin_text, ix);
@@ -892,76 +852,6 @@ impl<'a> FirstPass<'a> {
             // numbered lists starting at an index other than 1
             !scan_empty_list(&suffix[ix..]) && (delim == b'*' || delim == b'-' || index == 1)
         })
-    }
-
-    /// When start_ix is at the beginning of an HTML block of type 1 to 5,
-    /// this will find the end of the block, adding the block itself to the
-    /// tree and also keeping track of the lines of HTML within the block.
-    ///
-    /// The html_end_tag is the tag that must be found on a line to end the block.
-    fn parse_html_block_type_1_to_5(
-        &mut self,
-        start_ix: usize,
-        html_end_tag: &str,
-        mut remaining_space: usize,
-    ) -> usize {
-        let bytes = self.text.as_bytes();
-        let mut ix = start_ix;
-        loop {
-            let line_start_ix = ix;
-            ix += scan_nextline(&bytes[ix..]);
-            self.append_html_line(remaining_space, line_start_ix, ix);
-
-            let mut line_start = LineStart::new(&bytes[ix..]);
-            let n_containers = scan_containers(&self.tree, &mut line_start);
-            if n_containers < self.tree.spine_len() {
-                break;
-            }
-
-            if (&self.text[line_start_ix..ix]).contains(html_end_tag) {
-                break;
-            }
-
-            let next_line_ix = ix + line_start.bytes_scanned();
-            if next_line_ix == self.text.len() {
-                break;
-            }
-            ix = next_line_ix;
-            remaining_space = line_start.remaining_space();
-        }
-        ix
-    }
-
-    /// When start_ix is at the beginning of an HTML block of type 6 or 7,
-    /// this will consume lines until there is a blank line and keep track of
-    /// the HTML within the block.
-    fn parse_html_block_type_6_or_7(
-        &mut self,
-        start_ix: usize,
-        mut remaining_space: usize,
-    ) -> usize {
-        let bytes = self.text.as_bytes();
-        let mut ix = start_ix;
-        loop {
-            let line_start_ix = ix;
-            ix += scan_nextline(&bytes[ix..]);
-            self.append_html_line(remaining_space, line_start_ix, ix);
-
-            let mut line_start = LineStart::new(&bytes[ix..]);
-            let n_containers = scan_containers(&self.tree, &mut line_start);
-            if n_containers < self.tree.spine_len() || line_start.is_at_eol() {
-                break;
-            }
-
-            let next_line_ix = ix + line_start.bytes_scanned();
-            if next_line_ix == self.text.len() || scan_blank_line(&bytes[next_line_ix..]).is_some()
-            {
-                break;
-            }
-            ix = next_line_ix;
-            remaining_space = line_start.remaining_space();
-        }
-        ix
     }
 
     fn parse_indented_code_block(&mut self, start_ix: usize, mut remaining_space: usize) -> usize {
@@ -1080,38 +970,6 @@ impl<'a> FirstPass<'a> {
             self.tree.append_text(end - 1, end);
         } else {
             self.tree.append_text(start, end);
-        }
-    }
-
-    /// Appends a line of HTML to the tree.
-    fn append_html_line(&mut self, remaining_space: usize, start: usize, end: usize) {
-        if remaining_space > 0 {
-            let cow_ix = self.allocs.allocate_cow("   "[..remaining_space].into());
-            self.tree.append(Item {
-                start,
-                end: start,
-                // TODO: maybe this should synthesize to html rather than text?
-                body: ItemBody::SynthesizeText(cow_ix),
-            });
-        }
-        if self.text.as_bytes()[end - 2] == b'\r' {
-            // Normalize CRLF to LF
-            self.tree.append(Item {
-                start,
-                end: end - 2,
-                body: ItemBody::Html,
-            });
-            self.tree.append(Item {
-                start: end - 1,
-                end,
-                body: ItemBody::Html,
-            });
-        } else {
-            self.tree.append(Item {
-                start,
-                end,
-                body: ItemBody::Html,
-            });
         }
     }
 
@@ -1494,66 +1352,11 @@ fn delim_run_can_close(s: &str, suffix: &str, run_len: usize, ix: usize) -> bool
 /// Note: lists are dealt with in `interrupt_paragraph_by_list`, because determing
 /// whether to break on a list requires additional context.
 fn scan_paragraph_interrupt(bytes: &[u8]) -> bool {
-    if scan_eol(bytes).is_some()
+    scan_eol(bytes).is_some()
         || scan_hrule(bytes).is_ok()
         || scan_atx_heading(bytes).is_some()
         || scan_code_fence(bytes).is_some()
         || scan_blockquote_start(bytes).is_some()
-    {
-        return true;
-    }
-    bytes.starts_with(b"<")
-        && (get_html_end_tag(&bytes[1..]).is_some()
-            || is_html_tag(scan_html_block_tag(&bytes[1..]).1))
-}
-
-/// Assumes `text_bytes` is preceded by `<`.
-fn get_html_end_tag(text_bytes: &[u8]) -> Option<&'static str> {
-    static BEGIN_TAGS: &[&[u8]; 3] = &[b"pre", b"style", b"script"];
-    static ST_BEGIN_TAGS: &[&[u8]; 3] = &[b"!--", b"?", b"![CDATA["];
-
-    for (beg_tag, end_tag) in BEGIN_TAGS
-        .iter()
-        .zip(["</pre>", "</style>", "</script>"].iter())
-    {
-        let tag_len = beg_tag.len();
-
-        if text_bytes.len() < tag_len {
-            // begin tags are increasing in size
-            break;
-        }
-
-        if !text_bytes[..tag_len].eq_ignore_ascii_case(beg_tag) {
-            continue;
-        }
-
-        // Must either be the end of the line...
-        if text_bytes.len() == tag_len {
-            return Some(end_tag);
-        }
-
-        // ...or be followed by whitespace, newline, or '>'.
-        let s = text_bytes[tag_len];
-        if is_ascii_whitespace(s) || s == b'>' {
-            return Some(end_tag);
-        }
-    }
-
-    for (beg_tag, end_tag) in ST_BEGIN_TAGS.iter().zip(["-->", "?>", "]]>"].iter()) {
-        if text_bytes.starts_with(beg_tag) {
-            return Some(end_tag);
-        }
-    }
-
-    if text_bytes.len() > 1
-        && text_bytes[0] == b'!'
-        && text_bytes[1] >= b'A'
-        && text_bytes[1] <= b'Z'
-    {
-        Some(">")
-    } else {
-        None
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2000,57 +1803,6 @@ impl<'a> Parser<'a> {
 
         while let Some(mut cur_ix) = cur {
             match self.tree[cur_ix].item.body {
-                ItemBody::MaybeHtml => {
-                    let next = self.tree[cur_ix].next;
-                    let autolink = if let Some(next_ix) = next {
-                        scan_autolink(block_text, self.tree[next_ix].item.start)
-                    } else {
-                        None
-                    };
-
-                    if let Some((ix, uri, link_type)) = autolink {
-                        let node = scan_nodes_to_ix(&self.tree, next, ix);
-                        let text_node = self.tree.create_node(Item {
-                            start: self.tree[cur_ix].item.start + 1,
-                            end: ix - 1,
-                            body: ItemBody::Text,
-                        });
-                        let link_ix = self.allocs.allocate_link(link_type, uri, "".into());
-                        self.tree[cur_ix].item.body = ItemBody::Link(link_ix);
-                        self.tree[cur_ix].item.end = ix;
-                        self.tree[cur_ix].next = node;
-                        self.tree[cur_ix].child = Some(text_node);
-                        prev = cur;
-                        cur = node;
-                        if let Some(node_ix) = cur {
-                            self.tree[node_ix].item.start = max(self.tree[node_ix].item.start, ix);
-                        }
-                        continue;
-                    } else {
-                        let inline_html = if let Some(next_ix) = next {
-                            self.scan_inline_html(
-                                block_text.as_bytes(),
-                                self.tree[next_ix].item.start,
-                            )
-                        } else {
-                            None
-                        };
-                        if let Some(ix) = inline_html {
-                            let node = scan_nodes_to_ix(&self.tree, next, ix);
-                            self.tree[cur_ix].item.body = ItemBody::Html;
-                            self.tree[cur_ix].item.end = ix;
-                            self.tree[cur_ix].next = node;
-                            prev = cur;
-                            cur = node;
-                            if let Some(node_ix) = cur {
-                                self.tree[node_ix].item.start =
-                                    max(self.tree[node_ix].item.start, ix);
-                            }
-                            continue;
-                        }
-                    }
-                    self.tree[cur_ix].item.body = ItemBody::Text;
-                }
                 ItemBody::MaybeCode(mut search_count, preceded_by_backslash) => {
                     if preceded_by_backslash {
                         search_count -= 1;
@@ -2542,26 +2294,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Returns the next byte offset on success.
-    fn scan_inline_html(&mut self, bytes: &[u8], ix: usize) -> Option<usize> {
-        let c = *bytes.get(ix)?;
-        if c == b'!' {
-            scan_inline_html_comment(bytes, ix + 1, &mut self.html_scan_guard)
-        } else if c == b'?' {
-            scan_inline_html_processing(bytes, ix + 1, &mut self.html_scan_guard)
-        } else {
-            let i = scan_html_block_inner(
-                &bytes[ix..],
-                Some(&|_bytes| {
-                    let mut line_start = LineStart::new(bytes);
-                    let _ = scan_containers(&self.tree, &mut line_start);
-                    line_start.bytes_scanned()
-                }),
-            )?;
-            Some(i + ix)
-        }
-    }
-
     /// Consumes the event iterator and produces an iterator that produces
     /// `(Event, Range)` pairs, where the `Range` value maps to the corresponding
     /// range in the markdown source.
@@ -2733,7 +2465,6 @@ fn item_to_event<'a>(item: Item, text: &'a str, allocs: &Allocations<'a>) -> Eve
         ItemBody::Text => return Event::Text(text[item.start..item.end].into()),
         ItemBody::Code(cow_ix) => return Event::Code(allocs[cow_ix].clone()),
         ItemBody::SynthesizeText(cow_ix) => return Event::Text(allocs[cow_ix].clone()),
-        ItemBody::Html => return Event::Html(text[item.start..item.end].into()),
         ItemBody::SoftBreak => return Event::SoftBreak,
         ItemBody::HardBreak => return Event::HardBreak,
         ItemBody::FootnoteReference(cow_ix) => {

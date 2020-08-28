@@ -24,77 +24,11 @@ use std::char;
 use std::convert::TryInto;
 
 use crate::entities;
-use crate::parse::{Alignment, HtmlScanGuard, LinkType};
+use crate::parse::Alignment;
 pub use crate::puncttable::{is_ascii_punctuation, is_punctuation};
 use crate::strings::CowStr;
 
 use memchr::memchr;
-
-// sorted for binary search
-const HTML_TAGS: [&str; 62] = [
-    "address",
-    "article",
-    "aside",
-    "base",
-    "basefont",
-    "blockquote",
-    "body",
-    "caption",
-    "center",
-    "col",
-    "colgroup",
-    "dd",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "dt",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "form",
-    "frame",
-    "frameset",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hr",
-    "html",
-    "iframe",
-    "legend",
-    "li",
-    "link",
-    "main",
-    "menu",
-    "menuitem",
-    "nav",
-    "noframes",
-    "ol",
-    "optgroup",
-    "option",
-    "p",
-    "param",
-    "section",
-    "source",
-    "summary",
-    "table",
-    "tbody",
-    "td",
-    "tfoot",
-    "th",
-    "thead",
-    "title",
-    "tr",
-    "track",
-    "ul",
-];
 
 /// Analysis of the beginning of a line, including indentation and container
 /// markers.
@@ -328,13 +262,6 @@ pub(crate) fn is_ascii_whitespace_no_nl(c: u8) -> bool {
     c == b'\t' || c == 0x0b || c == 0x0c || c == b' '
 }
 
-fn is_ascii_alpha(c: u8) -> bool {
-    match c {
-        b'a'..=b'z' | b'A'..=b'Z' => true,
-        _ => false,
-    }
-}
-
 fn is_ascii_alphanumeric(c: u8) -> bool {
     match c {
         b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => true,
@@ -342,19 +269,8 @@ fn is_ascii_alphanumeric(c: u8) -> bool {
     }
 }
 
-fn is_ascii_letterdigitdash(c: u8) -> bool {
-    c == b'-' || is_ascii_alphanumeric(c)
-}
-
 fn is_digit(c: u8) -> bool {
     b'0' <= c && c <= b'9'
-}
-
-fn is_valid_unquoted_attr_value_char(c: u8) -> bool {
-    match c {
-        b'\'' | b'"' | b' ' | b'=' | b'>' | b'<' | b'`' | b'\n' | b'\r' => false,
-        _ => true,
-    }
 }
 
 // scan a single character
@@ -388,10 +304,6 @@ pub(crate) fn scan_ch_repeat(data: &[u8], c: u8) -> usize {
 // a different function.
 pub(crate) fn scan_whitespace_no_nl(data: &[u8]) -> usize {
     scan_while(data, is_ascii_whitespace_no_nl)
-}
-
-fn scan_attr_value_chars(data: &[u8]) -> usize {
-    scan_while(data, is_valid_unquoted_attr_value_char)
 }
 
 pub(crate) fn scan_eol(bytes: &[u8]) -> Option<usize> {
@@ -841,73 +753,6 @@ pub(crate) fn scan_link_dest(
     }
 }
 
-/// Returns bytes scanned
-fn scan_attribute_name(data: &[u8]) -> Option<usize> {
-    let (&c, tail) = data.split_first()?;
-    if is_ascii_alpha(c) || c == b'_' || c == b':' {
-        Some(
-            1 + scan_while(tail, |c| {
-                is_ascii_alphanumeric(c) || c == b'_' || c == b'.' || c == b':' || c == b'-'
-            }),
-        )
-    } else {
-        None
-    }
-}
-
-/// Returns byte scanned (TODO: should it return new offset?)
-// TODO: properly use the newline handler here
-fn scan_attribute(data: &[u8], newline_handler: Option<&dyn Fn(&[u8]) -> usize>) -> Option<usize> {
-    let allow_newline = newline_handler.is_some();
-    let whitespace_scanner =
-        |c| is_ascii_whitespace(c) && (allow_newline || c != b'\n' && c != b'\r');
-    let mut ix = scan_attribute_name(data)?;
-    let n_whitespace = scan_while(&data[ix..], whitespace_scanner);
-    ix += n_whitespace;
-    if scan_ch(&data[ix..], b'=') == 1 {
-        ix += 1;
-        ix += scan_while(&data[ix..], whitespace_scanner);
-        ix += scan_attribute_value(&data[ix..], newline_handler)?;
-    } else if n_whitespace > 0 {
-        // Leave whitespace for next attribute.
-        ix -= 1;
-    }
-    Some(ix)
-}
-
-fn scan_attribute_value(
-    data: &[u8],
-    newline_handler: Option<&dyn Fn(&[u8]) -> usize>,
-) -> Option<usize> {
-    let mut i = 0;
-    match *data.get(0)? {
-        b @ b'"' | b @ b'\'' => {
-            i += 1;
-            while i < data.len() {
-                if data[i] == b {
-                    return Some(i + 1);
-                }
-                if let Some(eol_bytes) = scan_eol(&data[i..]) {
-                    let handler = newline_handler?;
-                    i += eol_bytes;
-                    i += handler(&data[i..]);
-                } else {
-                    i += 1;
-                }
-            }
-            return None;
-        }
-        b' ' | b'=' | b'>' | b'<' | b'`' | b'\n' | b'\r' => {
-            return None;
-        }
-        _ => {
-            // unquoted attribute value
-            i += scan_attr_value_chars(&data[i..]);
-        }
-    }
-    Some(i)
-}
-
 // Remove backslash escapes and resolve entities
 pub(crate) fn unescape(input: &str) -> CowStr<'_> {
     let mut result = String::new();
@@ -944,290 +789,6 @@ pub(crate) fn unescape(input: &str) -> CowStr<'_> {
         result.push_str(&input[mark..]);
         result.into()
     }
-}
-
-/// Assumes `data` is preceded by `<`.
-pub(crate) fn scan_html_block_tag(data: &[u8]) -> (usize, &[u8]) {
-    let i = scan_ch(data, b'/');
-    let n = scan_while(&data[i..], is_ascii_alphanumeric);
-    // TODO: scan attributes and >
-    (i + n, &data[i..i + n])
-}
-
-pub(crate) fn is_html_tag(tag: &[u8]) -> bool {
-    HTML_TAGS
-        .binary_search_by(|probe| {
-            let probe_bytes_iter = probe.as_bytes().iter();
-            let tag_bytes_iter = tag.iter();
-
-            probe_bytes_iter
-                .zip(tag_bytes_iter)
-                .find_map(|(&a, &b)| {
-                    // We can compare case insensitively because the probes are
-                    // all lower case alpha strings.
-                    match a.cmp(&(b | 0x20)) {
-                        std::cmp::Ordering::Equal => None,
-                        inequality => Some(inequality),
-                    }
-                })
-                .unwrap_or_else(|| probe.len().cmp(&tag.len()))
-        })
-        .is_ok()
-}
-
-/// Assumes that `data` is preceded by `<`.
-pub(crate) fn scan_html_type_7(data: &[u8]) -> Option<usize> {
-    // Block type html does not allow for newlines, so we
-    // do not pass a newline handler.
-    let i = scan_html_block_inner(data, None)?;
-    scan_blank_line(&data[i..])?;
-    Some(i)
-}
-
-// FIXME: instead of a newline handler, maybe this should receive
-// a whitespace handler instead.
-// With signature `&dyn Fn(&[u8]) -> Option<usize>`.
-// We currently need to implement whitespace handling in all of
-// this function's dependencies as well.
-pub(crate) fn scan_html_block_inner(
-    data: &[u8],
-    newline_handler: Option<&dyn Fn(&[u8]) -> usize>,
-) -> Option<usize> {
-    let close_tag_bytes = scan_ch(data, b'/');
-    let l = scan_while(&data[close_tag_bytes..], is_ascii_alpha);
-    if l == 0 {
-        return None;
-    }
-    let mut i = close_tag_bytes + l;
-    i += scan_while(&data[i..], is_ascii_letterdigitdash);
-
-    if close_tag_bytes == 0 {
-        loop {
-            let old_i = i;
-            loop {
-                i += scan_whitespace_no_nl(&data[i..]);
-                if let Some(eol_bytes) = scan_eol(&data[i..]) {
-                    if eol_bytes == 0 {
-                        return None;
-                    }
-                    if let Some(handler) = newline_handler {
-                        i += eol_bytes;
-                        i += handler(&data[i..]);
-                    } else {
-                        return None;
-                    }
-                } else {
-                    break;
-                }
-            }
-            if let Some(b'/') | Some(b'>') = data.get(i) {
-                break;
-            }
-            if old_i == i {
-                // No whitespace, which is mandatory.
-                return None;
-            }
-            i += scan_attribute(&data[i..], newline_handler)?;
-        }
-    }
-
-    i += scan_whitespace_no_nl(&data[i..]);
-
-    if close_tag_bytes == 0 {
-        i += scan_ch(&data[i..], b'/');
-    }
-
-    if scan_ch(&data[i..], b'>') == 0 {
-        None
-    } else {
-        Some(i + 1)
-    }
-}
-
-/// Returns (next_byte_offset, uri, type)
-pub(crate) fn scan_autolink(text: &str, start_ix: usize) -> Option<(usize, CowStr<'_>, LinkType)> {
-    scan_uri(text, start_ix)
-        .map(|(bytes, uri)| (bytes, uri, LinkType::Autolink))
-        .or_else(|| scan_email(text, start_ix).map(|(bytes, uri)| (bytes, uri, LinkType::Email)))
-}
-
-/// Returns (next_byte_offset, uri)
-fn scan_uri(text: &str, start_ix: usize) -> Option<(usize, CowStr<'_>)> {
-    let bytes = &text.as_bytes()[start_ix..];
-
-    // scheme's first byte must be an ascii letter
-    if bytes.is_empty() || !is_ascii_alpha(bytes[0]) {
-        return None;
-    }
-
-    let mut i = 1;
-
-    while i < bytes.len() {
-        let c = bytes[i];
-        i += 1;
-        match c {
-            c if is_ascii_alphanumeric(c) => (),
-            b'.' | b'-' | b'+' => (),
-            b':' => break,
-            _ => return None,
-        }
-    }
-
-    // scheme length must be between 2 and 32 characters long. scheme
-    // must be followed by colon
-    if i < 3 || i > 33 {
-        return None;
-    }
-
-    while i < bytes.len() {
-        match bytes[i] {
-            b'>' => return Some((start_ix + i + 1, text[start_ix..(start_ix + i)].into())),
-            b'\0'..=b' ' | b'<' => return None,
-            _ => (),
-        }
-        i += 1;
-    }
-
-    None
-}
-
-/// Returns (next_byte_offset, email)
-fn scan_email(text: &str, start_ix: usize) -> Option<(usize, CowStr<'_>)> {
-    // using a regex library would be convenient, but doing it by hand is not too bad
-    let bytes = &text.as_bytes()[start_ix..];
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let c = bytes[i];
-        i += 1;
-        match c {
-            c if is_ascii_alphanumeric(c) => (),
-            b'.' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'/' | b'=' | b'?'
-            | b'^' | b'_' | b'`' | b'{' | b'|' | b'}' | b'~' | b'-' => (),
-            b'@' => break,
-            _ => return None,
-        }
-    }
-
-    loop {
-        let label_start_ix = i;
-        let mut fresh_label = true;
-
-        while i < bytes.len() {
-            match bytes[i] {
-                c if is_ascii_alphanumeric(c) => (),
-                b'-' if fresh_label => {
-                    return None;
-                }
-                b'-' => (),
-                _ => break,
-            }
-            fresh_label = false;
-            i += 1;
-        }
-
-        if i == label_start_ix || i - label_start_ix > 63 || bytes[i - 1] == b'-' {
-            return None;
-        }
-
-        if scan_ch(&bytes[i..], b'.') == 0 {
-            break;
-        }
-        i += 1;
-    }
-
-    if scan_ch(&bytes[i..], b'>') == 0 {
-        return None;
-    }
-
-    Some((start_ix + i + 1, text[start_ix..(start_ix + i)].into()))
-}
-
-/// Scan comment, declaration, or CDATA section, with initial "<!" already consumed.
-/// Returns byte offset on match.
-pub(crate) fn scan_inline_html_comment(
-    bytes: &[u8],
-    mut ix: usize,
-    scan_guard: &mut HtmlScanGuard,
-) -> Option<usize> {
-    let c = *bytes.get(ix)?;
-    ix += 1;
-    match c {
-        b'-' => {
-            let dashes = scan_ch_repeat(&bytes[ix..], b'-');
-            if dashes < 1 {
-                return None;
-            }
-            // Saw "<!--", scan comment.
-            ix += dashes;
-            if scan_ch(&bytes[ix..], b'>') == 1 {
-                return None;
-            }
-
-            while let Some(x) = memchr(b'-', &bytes[ix..]) {
-                ix += x + 1;
-                if scan_ch(&bytes[ix..], b'-') == 1 {
-                    ix += 1;
-                    return if scan_ch(&bytes[ix..], b'>') == 1 {
-                        Some(ix + 1)
-                    } else {
-                        None
-                    };
-                }
-            }
-            None
-        }
-        b'[' if bytes[ix..].starts_with(b"CDATA[") && ix > scan_guard.cdata => {
-            ix += b"CDATA[".len();
-            ix = memchr(b']', &bytes[ix..]).map_or(bytes.len(), |x| ix + x);
-            let close_brackets = scan_ch_repeat(&bytes[ix..], b']');
-            ix += close_brackets;
-
-            if close_brackets == 0 || scan_ch(&bytes[ix..], b'>') == 0 {
-                scan_guard.cdata = ix;
-                None
-            } else {
-                Some(ix + 1)
-            }
-        }
-        b'A'..=b'Z' if ix > scan_guard.declaration => {
-            // Scan declaration.
-            ix += scan_while(&bytes[ix..], |c| c >= b'A' && c <= b'Z');
-            let whitespace = scan_while(&bytes[ix..], is_ascii_whitespace);
-            if whitespace == 0 {
-                return None;
-            }
-            ix += whitespace;
-            ix = memchr(b'>', &bytes[ix..]).map_or(bytes.len(), |x| ix + x);
-            if scan_ch(&bytes[ix..], b'>') == 0 {
-                scan_guard.declaration = ix;
-                None
-            } else {
-                Some(ix + 1)
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Scan processing directive, with initial "<?" already consumed.
-/// Returns the next byte offset on success.
-pub(crate) fn scan_inline_html_processing(
-    bytes: &[u8],
-    mut ix: usize,
-    scan_guard: &mut HtmlScanGuard,
-) -> Option<usize> {
-    if ix <= scan_guard.processing {
-        return None;
-    }
-    while let Some(offset) = memchr(b'?', &bytes[ix..]) {
-        ix += offset + 1;
-        if scan_ch(&bytes[ix..], b'>') == 1 {
-            return Some(ix + 1);
-        }
-    }
-    scan_guard.processing = ix;
-    None
 }
 
 #[cfg(test)]
