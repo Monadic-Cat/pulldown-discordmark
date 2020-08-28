@@ -19,25 +19,6 @@ fn footnotes_test_1() {
 }
 
 #[test]
-fn footnotes_test_2() {
-    let original = r##"> This is the song that never ends.\
-> Yes it goes on and on my friends.[^lambchops]
->
-> [^lambchops]: <https://www.youtube.com/watch?v=0U2zJOryHKQ>
-"##;
-    let expected = r##"<blockquote>
-<p>This is the song that never ends.<br />
-Yes it goes on and on my friends.<sup class="footnote-reference"><a href="#lambchops">1</a></sup></p>
-<div class="footnote-definition" id="lambchops"><sup class="footnote-definition-label">1</sup>
-<p><a href="https://www.youtube.com/watch?v=0U2zJOryHKQ">https://www.youtube.com/watch?v=0U2zJOryHKQ</a></p>
-</div>
-</blockquote>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
 fn footnotes_test_3() {
     let original = r##"Songs that simply loop are a popular way to annoy people. [^examples]
 

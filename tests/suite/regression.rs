@@ -4,22 +4,6 @@
 use super::test_markdown_html;
 
 #[test]
-fn regression_test_1() {
-    let original = r##"<details><summary>Testing 1..2..3..</summary>
-
-This is a test of the details element.
-
-</details>
-"##;
-    let expected = r##"<details><summary>Testing 1..2..3..</summary>
-<p>This is a test of the details element.</p>
-</details>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
 fn regression_test_2() {
     let original = r##"see the [many] [articles] [on] [QuickCheck].
 
@@ -88,59 +72,6 @@ fn regression_test_5() {
 }
 
 #[test]
-fn regression_test_6() {
-    let original = r##"<https://example.com> hello
-"##;
-    let expected = r##"<p><a href="https://example.com">https://example.com</a> hello</p>
-
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_7() {
-    let original = r##"[foo][bar]
-
-<!-- foo -->
-[bar]: a
-"##;
-    let expected = r##"<p><a href="a">foo</a></p>
-<!-- foo -->
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_8() {
-    let original = r##"<!-- <dl> -->
-- **foo** (u8, u8)
-
-  make something
-
-- **bar** (u16, u16)
-
-  make something
-"##;
-    let expected = r##"<!-- <dl> -->
-<ul>
-<li>
-<p><strong>foo</strong> (u8, u8)</p>
-<p>make something</p>
-</li>
-<li>
-<p><strong>bar</strong> (u16, u16)</p>
-<p>make something</p>
-</li>
-</ul>
-
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
 fn regression_test_9() {
     let original = r##"[`
 i8
@@ -186,19 +117,6 @@ fn regression_test_12() {
 "##;
     let expected = r##"<p>[a]</p>
 <p>[a]: /url (title))</p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_13() {
-    let original = r##"a <?php this is not a valid processing tag
----
-b <?php but this is ?>
-"##;
-    let expected = r##"<h2>a &lt;?php this is not a valid processing tag</h2>
-<p>b <?php but this is ?></p>
 "##;
 
     test_markdown_html(original, expected);
@@ -359,46 +277,6 @@ foo|bar
 }
 
 #[test]
-fn regression_test_26() {
-    let original = r##"[<foo>](url)
-"##;
-    let expected = r##"<p><a href="url"><foo></a></p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_27() {
-    let original = r##"[<foo>bar</foo>](url)
-"##;
-    let expected = r##"<p><a href="url"><foo>bar</foo></a></p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_28() {
-    let original = r##"![<http://example.com>](http://example.com/logo.png)
-"##;
-    let expected = r##"<p><img alt="http://example.com" src="http://example.com/logo.png"></p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_29() {
-    let original = r##"[<http://one> <http://two>](url)
-"##;
-    let expected = r##"<p><a href="url"></a><a href="http://one">http://one</a> <a href="http://two">http://two</a></p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
 fn regression_test_30() {
     let original = r##"Markdown | Less | Pretty
 --- | --- | ---
@@ -469,28 +347,6 @@ yolo | swag
 <table><thead><tr><th>foo</th><th>bar</th></tr></thead></table>
 </blockquote>
 <p>yolo | swag</p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_35() {
-    let original = r##"<foo bar>
-"##;
-    let expected = r##"<foo bar>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_36() {
-    let original = r##"<foo bar =
- "hi"> 
-"##;
-    let expected = r##"<p><foo bar =
- "hi"> </p>
 "##;
 
     test_markdown_html(original, expected);
@@ -666,26 +522,6 @@ fn regression_test_49() {
 }
 
 #[test]
-fn regression_test_50() {
-    let original = r##"<sup>\*hi</sup>\_
-"##;
-    let expected = r##"<p><sup>*hi</sup>_</p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_51() {
-    let original = r##"email: <john@example.com>\_
-"##;
-    let expected = r##"<p>email: <a href="mailto:john@example.com">john@example.com</a>_</p>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
 fn regression_test_52() {
     let original = r##"> [link](/url 'foo
 > bar')
@@ -843,51 +679,6 @@ fn regression_test_61() {
     let expected = r##"<p><a href="b"></a></p>
 
 <h1>assimp-rs <a href="https://crates.io/crates/assimp"><img alt="" src="http://meritbadge.herokuapp.com/assimp"></a></h1>
-"##;
-
-    test_markdown_html(original, expected);
-}
-
-#[test]
-fn regression_test_62() {
-    let original = r##"* A list.
-
-   * A sublist.
-
-   * Another sublist.
-
-
-* A list.
- 
-   * A sublist.
- 
-   * Another sublist.
- 
-"##;
-    let expected = r##"<ul>
-<li>
-<p>A list.</p>
-<ul>
-<li>
-<p>A sublist.</p>
-</li>
-<li>
-<p>Another sublist.</p>
-</li>
-</ul>
-</li>
-<li>
-<p>A list.</p>
-<ul>
-<li>
-<p>A sublist.</p>
-</li>
-<li>
-<p>Another sublist.</p>
-</li>
-</ul>
-</li>
-</ul>
 "##;
 
     test_markdown_html(original, expected);
