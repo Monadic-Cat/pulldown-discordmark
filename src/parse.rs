@@ -1713,18 +1713,6 @@ impl<'a> Index<AlignmentIndex> for Allocations<'a> {
     }
 }
 
-/// A struct containing information on the reachability of certain inline HTML
-/// elements. In particular, for cdata elements (`<![CDATA[`), processing
-/// elements (`<?`) and declarations (`<!DECLARATION`). The respectives usizes
-/// represent the indices before which a scan will always fail and can hence
-/// be skipped.
-#[derive(Clone, Default)]
-pub(crate) struct HtmlScanGuard {
-    pub cdata: usize,
-    pub processing: usize,
-    pub declaration: usize,
-}
-
 /// Markdown event iterator.
 #[derive(Clone)]
 pub struct Parser<'a> {
@@ -1732,7 +1720,6 @@ pub struct Parser<'a> {
     tree: Tree<Item>,
     allocs: Allocations<'a>,
     broken_link_callback: Option<&'a dyn Fn(&str, &str) -> Option<(String, String)>>,
-    html_scan_guard: HtmlScanGuard,
 
     // used by inline passes. store them here for reuse
     inline_stack: InlineStack,
@@ -1765,7 +1752,6 @@ impl<'a> Parser<'a> {
         tree.reset();
         let inline_stack = Default::default();
         let link_stack = Default::default();
-        let html_scan_guard = Default::default();
         Parser {
             text,
             tree,
@@ -1773,7 +1759,6 @@ impl<'a> Parser<'a> {
             broken_link_callback,
             inline_stack,
             link_stack,
-            html_scan_guard,
         }
     }
 
@@ -1788,10 +1773,9 @@ impl<'a> Parser<'a> {
         self.handle_emphasis();
     }
 
-    /// Handle inline HTML, code spans, and links.
+    /// Handle code spans and links.
     ///
-    /// This function handles both inline HTML and code spans, because they have
-    /// the same precedence. It also handles links, even though they have lower
+    /// This function handles code spans. It also handles links, even though they have lower
     /// precedence, because the URL of links must not be processed.
     fn handle_inline_pass1(&mut self) {
         let mut code_delims = CodeDelims::new();
